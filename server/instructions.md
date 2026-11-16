@@ -15,11 +15,11 @@ Agents often fail prematurely. You must not report artificial blockages. After a
 - **Error Reading:** If submission fails, do not assume the button is broken. Use text tools to read the DOM for on-screen validation errors (e.g., missing required fields) and correct them.
 - **False Alarms:** Ignore passive anti-bot badges (like the floating reCAPTCHA logo). Do not mistake them for active, blocking challenges.
 
-## 3. THE `quick_task` DELEGATION PROTOCOL
-The `quick_task` tool runs instructions rapidly via a specialized model. Maximize its usage by feeding it a high-confidence "Route" (a step-by-step sequence of specific actions combined with their expected visual/DOM outcomes).
-- **Internal vs. Third-Party:** If you have access to the target product's source code, logically deduce the Route (routes, components, form fields) directly from the codebase before delegating. For third-party sites without source code, provide exhaustive known details (specific string values to type, exact dropdown options, and target page identifiers).
-- **Low Confidence Handling:** If you cannot establish a clear, predictable Route, do not use `quick_task`. Execute the task manually yourself.
-- **Resuming Execution:** If `quick_task` yields control back to you because it got stuck, resolve *only* that specific blocked step. Once unblocked, hand control back to `quick_task` using the *exact same original Route*. Do not rewrite the entire instruction set.
+## 3. SMALL-MODEL FALLBACK ONLY
+Use ordinary browser tools and deterministic scripts first. Call quick_task, quick_find or quick_check only when direct operation or inspection is stuck and the model can help with the specific blocked step. Do not use them by default for a known form or a new site's initial inspection.
+- Give the helper a narrow task, exact approved values, and expected outcomes.
+- After the blocked step is resolved, return to direct tools and the saved route. Do not automatically delegate the rest of the workflow.
+- Model uncertainty never authorizes guessing product facts or crossing a user-specified submission boundary.
 
 ## 4. STRICT HALTING CONDITIONS
 Halt autonomous execution and query the user ONLY under these specific circumstances:
@@ -37,5 +37,8 @@ Batch or repetitive work is far cheaper as one injected `javascript_tool` script
 - One-off exploration or a short flow of a few steps: skip scripting and use the normal tools.
 
 ## LOCAL DIRECTORY RECORDS
+For a known site, load its saved recipe and reuse it after the normal page read confirms the fields. For a new site, inspect the form first, fill it with direct tools, verify the actual values and uploaded assets, then save the successful method for next time. Save improvements discovered on known sites as well.
 When working on directory listings, call backlinks(action=start, site, product, profile, tabId) once per target tab. Reuse the returned recipe. Call read_page normally: saved form structure is compared during that same read, without an extra browser or model call. A matching structure permits reuse of field mappings, not automatic final submission. Native main-document fields are covered; custom widgets, iframes, pricing prose and terms still need the normal page inspection. Use stable selectors from recipes with javascript_tool or fresh refs with form_input; never reuse old ref numbers. Prefer browser_batch for known fields and exact option values for selects. Use file_upload paths for local assets. Do not send stable known fields through quick_task unnecessarily.
 Browser operations and quick_task internal actions are logged automatically when BACKLINKS_DIR is configured; do not manually duplicate these logs. Logs omit input values, page text, scripts, credentials and file bytes. Save only public reusable mappings and known workarounds with backlinks(action=save, recipe). Record the actual outcome with backlinks(action=status); filled_not_submitted is distinct from submitted. Preserve the user's stop-before-submit instruction. Read a site's policy/status and do not repeat previously skipped work without a reason to recheck. CSV is append-only: the last row per product/site is current.
+
+Final submission follows the user's current instruction. If they explicitly ask to submit, finish verification and submit without asking the same permission again. If they say not to submit or to stop before submission, leave the draft in place. If final submission intent is unspecified, leave the draft and ask; never infer permission from a saved recipe or a previous task. Record submitted only after checking the actual response, and do not repeat an ambiguous submission.
