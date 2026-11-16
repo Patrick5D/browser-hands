@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: MCP 客户端与隔离的浏览器依赖替身。
+ * [OUTPUT]: 验证工具合同、批处理、上传与错误边界。
+ * [POS]: MCP 接口回归；不连接用户浏览器。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 const TEST_TMP = process.env.THUNDERMCP_TEST_TMP || '/tmp/thundermcp-test'
 require('node:fs').mkdirSync(TEST_TMP, { recursive: true })
 import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test'
@@ -101,6 +107,7 @@ const STR = { type: 'string' }
 const BOOL = { type: 'boolean' }
 const arr = (n: number) => ({ type: 'array', items: NUM, minItems: n, maxItems: n })
 const EXPECT: Record<string, { props: Record<string, any>; required: string[] }> = {
+  backlinks: { props: { action: {type:'string',enum:['get','start','save','status']}, site: STR, tabId: NUM, product: STR, profile: STR, recipe: {type:'object'}, status: {type:'string',enum:['filled_not_submitted','submitted','live','failed','skipped']}, note: STR }, required:['action','site'] },
   tabs_context_mcp: { props: { createIfEmpty: BOOL }, required: [] },
   tabs_create_mcp: { props: {}, required: [] },
   tabs_close_mcp: { props: { tabId: NUM }, required: ['tabId'] },
@@ -174,9 +181,9 @@ const shape = (s: any): any => {
 }
 
 describe('工具清单与 schema', () => {
-  test('恰好 26 个工具，名字一一对应', () => {
+  test('恰好 27 个工具，名字一一对应', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(EXPECT).sort())
-    expect(tools.length).toBe(26)
+    expect(tools.length).toBe(27)
   })
   test('每个工具的 description 是非空字符串', () => {
     for (const t of tools) {
@@ -853,9 +860,13 @@ describe('file_upload 分段与总量限制', () => {
     expect(stashes().length).toBe(0)
     expect(sent().params).toEqual({ ref: 'ref_1', tabId: 2, files })
   })
-  test('只给 paths：原样转发', async () => {
-    await call('file_upload', { ref: 'r', tabId: 2, paths: ['/a/b'] })
-    expect(sent().params).toEqual({ ref: 'r', tabId: 2, paths: ['/a/b'] })
+  test('本地 paths 在服务器读取并转成内容，不把路径交给扩展', async () => {
+    const path = TEST_TMP + '/upload-fixture.png'
+    await Bun.write(path, 'image fixture')
+    const result = await call('file_upload', { ref: 'r', tabId: 2, paths: [path] })
+    expect(result.isError).toBe(false)
+    expect(sent().params.files[0]).toEqual({name:'upload-fixture.png',mimeType:'image/png',data:Buffer.from('image fixture').toString('base64')})
+    expect(sent().params.paths).toBeUndefined()
   })
   test('data 恰为 600000 字符：不分段', async () => {
     const data = 'A'.repeat(600000)

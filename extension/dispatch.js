@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 接收 MCP 命令，依赖会话隔离与页内扫描。
+ * [OUTPUT]: 路由浏览器动作并返回读页结构快照。
+ * [POS]: 扩展请求入口；保持动作守卫与页面结果一致。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 // 方法分发中枢：把 MCP 发来的 (method, params, sessionId) 路由到各工具实现，
 // 并统一处理会话登记、标签准入、操作指示器、Stop 中止与「换站」守卫。
 import { redactUrl, redactTitle } from './redact.js'
@@ -207,6 +213,7 @@ async function readPage(params, s, g) {
     maxChars: params.max_chars ?? DEFAULT_MAX_CHARS,
     refId: null,
     compact: Boolean(params.compact),
+    ...(params.includeFormSchema ? { includeFormSchema: true } : {}),
   }
 
   if (params.ref_id) {

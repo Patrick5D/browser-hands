@@ -311,3 +311,13 @@
 ## 10. 测试方式说明
 
 本模块不能被 `import`（bun 里没有 `window`）。按方案「单测机制」，测试读取 `extension/page-scan.js` 源码，用 Playwright 打开静态 HTML（挂在假 http 源上，以便测同源规则和同源 iframe），以普通脚本注入后通过 `page.evaluate` 调 `window.__jevScan` 上的函数。每条用例一张新页面。
+
+## 目录表单回归（2026-11-16）
+原生 el.labels 支持 for 标签和包裹标签。
+标签文字排除内部输入框、下拉框和按钮内容。
+明确标签优先于 placeholder 和当前选项。
+observe 的 select.value 独立报告选择值，避免稳定名称掩盖选择变化。
+scan(includeFormSchema=true) 同次返回无输入值的原生表单结构与无查询参数 URL。
+结构不随输入值或选中项改变，必填项或选项变化会改变结构。
+
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

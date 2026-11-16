@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 读取当前文档控件、标签与 DOM 事件接口。
+ * [OUTPUT]: 提供页内扫描、表单结构快照和输入操作。
+ * [POS]: 插件注入层；供读页与小模型共用控件语义。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 // page-scan：注入网页的「页内工具箱」（经典脚本，不是 ES 模块）。
 // 挂到 window.__jevScan 上 8 个函数；重复注入时什么都不做，已发的编号继续有效。
 ;(function () {
@@ -133,11 +139,13 @@
 
   // ---------- 名字 ----------
   function labelForText(el) {
-    if (!el.id) return ''
-    const root = el.getRootNode()
-    if (!root || !root.querySelector) return ''
-    const lab = root.querySelector('label[for="' + CSS.escape(el.id) + '"]')
-    return lab ? squash(lab.innerText || lab.textContent) : ''
+    const labels = Array.from(el.labels || [])
+    if (labels.length) return labels.map(lab => {
+      const copy = lab.cloneNode(true)
+      copy.querySelectorAll('input,textarea,select,button').forEach(node => node.remove())
+      return squash(copy.textContent)
+    }).filter(Boolean).join(' ')
+    return ''
   }
 
   const visibleText = (el) => squash(el.innerText) || squash(el.textContent)
@@ -148,11 +156,11 @@
     const t = tagOf(el)
     if (isSensitive(el)) return aria || squash(el.getAttribute('title')) || labelForText(el)
     if (t === 'select') {
-      if (aria) return aria
+      if (aria || labelForText(el)) return aria || labelForText(el)
       const opt = el.selectedOptions && el.selectedOptions[0]
       return opt ? squash(opt.text) : ''
     }
-    if (aria) return aria
+    if (aria || labelForText(el)) return aria || labelForText(el)
     const sources = []
     if (t === 'input' || t === 'textarea') sources.push(el.getAttribute('placeholder'), el.getAttribute('title'))
     if (t === 'img') sources.push(el.getAttribute('alt'))
@@ -273,6 +281,17 @@
         pageContent = head + '\n(Output truncated at ' + max + ' characters. Use ref_id to focus on a subtree, or a larger max_chars, to see more.)'
       }
       const res = { pageContent, viewport }
+      if (o.includeFormSchema) {
+        res.url = location.origin + location.pathname
+        res.formSchema = Array.from(document.forms).map(form => ({
+          action: new URL(form.action, location.href).origin + new URL(form.action, location.href).pathname,
+          fields: Array.from(form.elements).filter(el => ['input', 'select', 'textarea', 'button'].includes(tagOf(el)) && !isSensitive(el)).map(el => ({
+            id: el.id, name: el.name, tag: tagOf(el), type: el.type, label: el.getAttribute('aria-label') || labelForText(el),
+            required: el.required, maxLength: el.maxLength, accept: el.accept, multiple: el.multiple,
+            options: el.options ? Array.from(el.options).map(op => [op.value, squash(op.text), op.disabled]) : undefined,
+          })),
+        }))
+      }
       if (o.compact) res.compact = compactRows.join('\n')
       return res
     } catch (e) {
@@ -584,6 +603,7 @@
       item.href = h.slice(0, 100)
     }
     if (t === 'select') {
+      if (!secret) item.value = Array.from(el.selectedOptions).map(op => op.value).join(', ')
       item.options = secret ? [] : Array.from(el.options).slice(0, 60).map((op, i) => ({
         i, label: squash(op.text).slice(0, 60), value: op.value, selected: op.selected, disabled: op.disabled,
       }))

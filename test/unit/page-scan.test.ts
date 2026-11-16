@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 页内扫描脚本与隔离的 Playwright 页面。
+ * [OUTPUT]: 验证 DOM 识别、填写和结构指纹。
+ * [POS]: 页内控件回归；不连接用户浏览器。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 // page-scan 单测：注入网页的经典脚本，不能 import。按方案「单测机制」读源码注入 Playwright 真页面，
 // 每条用例一张新页面。断言错误码、结构、数值约束，不断言文案。
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
@@ -746,4 +752,22 @@ describe('dropFiles', () => {
     expect(r.error.length).toBeGreaterThan(0)
     expect(r.errorCode).toBeUndefined()
   })
+})
+
+// ---------- 目录站实测回归 ----------
+test('包裹标签和下拉名称稳定，选中值变化可观察', async () => {
+  const p = await fresh('<form><label>Product name<input name="name" placeholder="Example"></label><label>Pricing<select><option value="">Choose</option><option value="free">Free</option></select></label></form>')
+  const first = await call(p, 'observe', { quietMs: 1 })
+  const field = first.elements.find((x:any)=>x.label==='Product name')
+  const select = first.elements.find((x:any)=>x.label==='Pricing')
+  expect(field).toBeDefined(); expect(select.value).toBe('')
+  await call(p,'formInput',select.ref,'free')
+  const next = await call(p,'observe',{quietMs:1})
+  expect(next.elements.find((x:any)=>x.ref===select.ref).label).toBe('Pricing')
+  expect(next.elements.find((x:any)=>x.ref===select.ref).value).toBe('free')
+  const schema1 = (await scan(p,{includeFormSchema:true})).formSchema
+  await call(p,'formInput',field.ref,'Changed value')
+  expect((await scan(p,{includeFormSchema:true})).formSchema).toEqual(schema1)
+  await p.locator('input').evaluate((e:any)=>e.required=true)
+  expect((await scan(p,{includeFormSchema:true})).formSchema).not.toEqual(schema1)
 })

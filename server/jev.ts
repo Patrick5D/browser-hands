@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 读取本地模型配置，接收任务文字与模型返回。
+ * [OUTPUT]: 提供模型调用、配置保存和原文候选提取。
+ * [POS]: 外部模型适配层；字段值来自任务，不由浏览器猜测。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 // key 只在 MCP 程序这边：环境变量或 ~/.config/jev-browser/config.json（0600），不进插件。
 // 模型调用层是 Jev 接口，测试里用 JEV_FAKE_MODULE 换成按脚本回答的假 Jev。
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
@@ -61,10 +67,17 @@ export function textCandidates(...sources: unknown[]): string[] {
     const t = v?.trim().replace(/^["'“‘]+|["'”’.,;:!?)]+$/g, '').trim()
     if (t && t.length <= 200) out.add(t)
   }
-  for (const m of src.matchAll(/[^\s<>"',;()]+@[^\s<>"',;()]+\.[^\s<>"',;()]*[^\s<>"',;().]/g)) add(m[0])
-  for (const m of src.matchAll(/["“‘']([^"”’'\n]{1,100})["”’']/g)) add(m[1])
-  for (const m of src.matchAll(/[:：=]\s*([^\n,;，；]+)/g)) add(m[1])
-  for (const m of src.matchAll(/\S*\d\S*/g)) add(m[0])
+  const looseLines: string[] = []
+  for (const line of src.split('\n')) {
+    const m = /^[^:：=\n]{1,100}[:：=][ \t]+(.+)$/.exec(line)
+    if (m && m[1].trim().length <= 4000) out.add(m[1].trim())
+    else looseLines.push(line)
+  }
+  const loose = looseLines.join('\n')
+  for (const m of loose.matchAll(/[^\s<>"',;()]+@[^\s<>"',;()]+\.[^\s<>"',;()]*[^\s<>"',;().]/g)) add(m[0])
+  for (const m of loose.matchAll(/["“‘']([^"”’'\n]{1,100})["”’']/g)) add(m[1])
+  for (const m of loose.matchAll(/[:：=]\s*([^\n,;，；]+)/g)) add(m[1])
+  for (const m of loose.matchAll(/\S*\d\S*/g)) add(m[0])
   return [...out]
 }
 

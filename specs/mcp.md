@@ -353,3 +353,13 @@
 - 会话标识的后缀字符集与长度；`file_upload` 分段 key 的字符集与长度。
 - 服务器版本号。
 - 选浏览器失败文字是否脱敏。
+
+## 本地外链记录扩展（2026-11-16，覆盖旧条款）
+工具数量现为 27，新增 backlinks；合同见 backlinks.md。
+启动时读取 BACKLINKS_DIR；未配置时记录关闭。
+启用时包装浏览器调用，包括 quick_task 内部调用。
+file_upload 的本地 paths 在服务端读取，按文件扩展名填 MIME。
+总大小超过 10 MB 在读取前拒绝；转为 files 后复用原分段暂存流程。
+路径不交给 Chrome 扩展。
+
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

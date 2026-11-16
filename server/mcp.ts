@@ -1,6 +1,13 @@
+/**
+ * [INPUT]: 依赖 Chrome 连接、工具执行器与 BacklinkStore 本地记录。
+ * [OUTPUT]: 注册 stdio MCP 工具；提供浏览器操作和站点复用记录。
+ * [POS]: MCP 编排入口；动作结果与日志共用执行路径。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 // MCP 服务器入口：导入即启动（stdio 传输）。没有任何导出。
 // 设计：每个工具 = 「schema 形状 + 处理函数」，处理函数只产出 Out（文字 / 可选图片 / 是否要附标签块），
 // 通用流程（选浏览器、会话标识、脱敏、截断、提示器、错误收口）与 browser_batch 都复用同一批处理函数。
+import { BacklinkStore } from './backlinks'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -29,7 +36,15 @@ type Ctx = { conn: Conn; sid: string }
 type Handler = (c: Ctx, a: any) => Promise<Out>
 
 const msgOf = (e: unknown) => String((e as any)?.message ?? e)
-const plug = (c: Ctx, method: string, params: unknown = {}) => c.conn.call(method, params, c.sid)
+const backlinks = new BacklinkStore()
+const plug = async (c: Ctx, method: string, params: any = {}) => {
+  const start = performance.now()
+  try {
+    const r = await c.conn.call(method, params, c.sid)
+    backlinks.event(method, params, performance.now() - start, undefined, r)
+    return r
+  } catch (e) { backlinks.event(method, params, performance.now() - start, e); throw e }
+}
 const asText = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
 const json = (v: unknown) => JSON.stringify(v)
 
@@ -68,6 +83,16 @@ const INLINE_LIMIT = 600000
 
 // file_upload：先算总字节，再把超长文件分段暂存，发给插件的文件项只带 stash 引用
 async function prepareUpload(c: Ctx, a: any) {
+  if (!Array.isArray(a.files) && a.paths?.length) {
+    const { readFileSync, statSync } = await import('node:fs')
+    const { basename, extname } = await import('node:path')
+    const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' }
+    let total = 0
+    for (const path of a.paths) { const stat = statSync(path); if (!stat.isFile()) throw new Error('input_invalid: upload path must be a file'); total += stat.size }
+    if (total > MAX_UPLOAD_BYTES) throw new Error('input_invalid: uploads are limited to 10 MB in total')
+    a = { ...a, files: a.paths.map((path: string) => ({ name: basename(path), mimeType: mime[extname(path).toLowerCase()] || 'application/octet-stream', data: readFileSync(path).toString('base64') })) }
+    delete a.paths
+  }
   if (!Array.isArray(a.files)) return a
   const decoded = (s: string) => Math.floor((s.length * 3) / 4) - (s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0)
   let total = 0
@@ -99,8 +124,8 @@ const tabsClose: Handler = async (c, a) => {
   return { text: `Closed tab ${r.tabId}.`, tabs: {} }
 }
 const readPage: Handler = async (c, a) => {
-  const r = await plug(c, 'read_page', a)
-  return { text: `${r.pageContent}\n\nViewport: ${r.viewport?.width}x${r.viewport?.height}`, tabs: { exec: r.tabId } }
+  const r = await plug(c, 'read_page', { ...a, ...(backlinks.root ? { includeFormSchema: true } : {}) })
+  return { text: `${r.pageContent}${backlinks.inspect(r.tabId, r.url, r.formSchema)}\n\nViewport: ${r.viewport?.width}x${r.viewport?.height}`, tabs: { exec: r.tabId } }
 }
 const pageText: Handler = async (c, a) => {
   const r = await plug(c, 'get_page_text', a)
@@ -144,10 +169,15 @@ const quickCheck: Handler = async (c, a) => {
 }
 const quickTask: Handler = async (c, a) => {
   const jev = await getJev()
-  const r = await startJevTask(c.conn, c.sid, a, jev)
+  const r = await startJevTask(backlinks.root ? { call: (method: string, params: any) => plug(c, method, params) } as Conn : c.conn, c.sid, a, jev)
+  backlinks.event('quick_task', a, r.elapsed_ms ?? 0, undefined, r)
   return { text: json(r), tabs: {} }
 }
-const taskQuery = (fn: (id: string) => unknown | Promise<unknown>): Handler => async (_c, a) => ({ text: json(await fn(a.taskId)), tabs: false })
+const taskQuery = (fn: (id: string) => unknown | Promise<unknown>): Handler => async (_c, a) => {
+  const r: any = await fn(a.taskId)
+  backlinks.event('quick_task_result', {}, 0, undefined, r)
+  return { text: json(r), tabs: false }
+}
 
 // ---------- schema 零件 ----------
 const num = z.number()
@@ -159,6 +189,18 @@ const xy = z.array(num).length(2)
 // ---------- 工具表 ----------
 type Def = { desc: string; shape: z.ZodRawShape; run: Handler; hint?: string; batch?: boolean }
 const DEFS: Record<string, Def> = {
+  backlinks: {
+    desc: 'Local directory workflow records. Start with site/product/tabId to load a saved recipe and tag logs. Save reusable public field mappings in recipe. Status appends a ledger entry; never infer submitted from filled fields. No browser actions are performed.',
+    shape: { action: z.enum(['get', 'start', 'save', 'status']), site: str, tabId: num.optional(), product: str.optional(), profile: str.optional(), recipe: z.record(str, z.unknown()).optional(), status: z.enum(['filled_not_submitted', 'submitted', 'live', 'failed', 'skipped']).optional(), note: str.optional() },
+    run: async (_c, a) => {
+      let result
+      if (a.action === 'start') { if (a.tabId === undefined || !a.product) throw new Error('start needs tabId and product'); result = backlinks.context(a.tabId, a.site, a.product, a.profile) }
+      else if (a.action === 'save') { if (!a.recipe) throw new Error('save needs recipe'); result = backlinks.save(a.site, { recipe: a.recipe }) }
+      else if (a.action === 'status') { if (!a.product || !a.status) throw new Error('status needs product and status'); result = backlinks.status(a.site, a.product, a.status, a.note) }
+      else result = backlinks.get(a.site)
+      return { text: json(result), tabs: false }
+    },
+  },
   tabs_context_mcp: {
     desc: 'List the tabs in your dedicated tab group (id, title, URL). Call this first in a session and whenever you lose track of which tab is which. Pass createIfEmpty to open a starter tab when the group has none.',
     shape: { createIfEmpty: bool.optional().describe('Create an initial tab if the group is empty.') },
@@ -440,6 +482,10 @@ async function withBrowser(name: string, args: any, body: (c: Ctx, info: any) =>
 
 async function runOne(name: string, args: any): Promise<Result> {
   const def = DEFS[name]
+  if (name === 'backlinks') {
+    try { const out = await def.run({} as Ctx, args); return { content: [T(polish(out.text, true))], isError: false } }
+    catch (e) { return { content: [T(polish(msgOf(e), false))], isError: true } }
+  }
   const noTrunc = typeof args?.max_chars === 'number'
   return withBrowser(name, args, async (c, info) => {
     const out = await def.run(c, args)

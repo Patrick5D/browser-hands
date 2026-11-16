@@ -369,3 +369,8 @@
 ## 12. 测试不断言（全部自定）的输出
 
 各动作 `output` 的句式、大小写、标点、附加说明；子 frame 标题行的写法；错误 message 的措辞（除「含某入参原文」的情形外）；确认小窗的宽高；复查守卫时的阶段标签文字。
+
+read_page 可传 includeFormSchema=true，转交页内 scan。
+返回主文档的 formSchema 和 URL；不增加独立页面请求。
+
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
